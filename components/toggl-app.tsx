@@ -1,235 +1,308 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { TopNav } from './top-nav'
-import { TimerCard } from './timer-card'
-import { DateToolbar } from './date-toolbar'
-import { TimeEntryCard } from './time-entry-card'
-import { CalendarView } from './calendar-view'
-import { BrowserFrame } from './browser-frame'
+import { BrowserFrame, type TabChrome } from './browser-frame'
+import { JiraBoard } from './jira-board'
+import { TogglPanel, type TabTimerState } from './toggl-panel'
 import { NewTabPopup } from './new-tab-popup'
 import {
-  dateKey,
-  makeInitialEntries,
-  startOfWeek,
-  type Project,
-  type TimeEntry,
-} from '@/lib/toggl-data'
+  COMPANIES,
+  COMPANY_ACME,
+  COMPANY_X,
+  COMPANY_Y,
+  seedEntriesFor,
+  type Company,
+} from '@/lib/companies'
+import { dateKey, type TimeEntry } from '@/lib/toggl-data'
+
+type Tab = {
+  id: string
+  companyId: string
+  timer: TabTimerState
+}
 
 function secondsOfDay(d: Date): number {
   return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
 }
 
+function makeTimerState(company: Company, running: boolean): TabTimerState {
+  const today = dateKey(new Date())
+  return {
+    description: running ? company.columns[1]?.issues[0]?.title ?? '' : '',
+    task: null,
+    project: running ? company.project : null,
+    tags: [],
+    billable: running,
+    running,
+    elapsed: running ? 47 * 60 + 12 : 0, // Company X already in progress
+    entries: seedEntriesFor(company, today),
+    date: today,
+    view: 'list',
+  }
+}
+
 export function TogglApp() {
-  const today = useMemo(() => new Date(), [])
-  const [entries, setEntries] = useState<TimeEntry[]>(() =>
-    makeInitialEntries(dateKey(today)),
-  )
+  // Monotonic counter for new tab IDs. Kept in a ref so Fast Refresh / Strict
+  // Mode re-running effects can never hand out a duplicate key.
+  const tabSeq = useRef(2)
+  const nextTabId = useCallback(() => {
+    tabSeq.current += 1
+    return `tab-${tabSeq.current}`
+  }, [])
 
-  // timer draft
-  const [description, setDescription] = useState('')
-  const [task, setTask] = useState<string | null>(null)
-  const [project, setProject] = useState<Project | null>(null)
-  const [tags, setTags] = useState<string[]>([])
-  const [billable, setBillable] = useState(false)
+  // Two tabs open on load: Acme (idle) + Company X (timer in progress).
+  const [tabs, setTabs] = useState<Tab[]>(() => [
+    {
+      id: 'tab-1',
+      companyId: COMPANY_ACME.id,
+      timer: makeTimerState(COMPANY_ACME, false),
+    },
+    {
+      id: 'tab-2',
+      companyId: COMPANY_X.id,
+      timer: makeTimerState(COMPANY_X, true),
+    },
+  ])
+  const [activeTabId, setActiveTabId] = useState<string>('tab-2')
 
-  // timer runtime
-  const [running, setRunning] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-
-  // view
-  const [date, setDate] = useState(() => new Date())
-  const [view, setView] = useState<'list' | 'calendar'>('list')
-
-  // popup
+  // Extension panel + popup
+  const [extensionOpen, setExtensionOpen] = useState(false)
   const [popupOpen, setPopupOpen] = useState(false)
 
-  useEffect(() => {
-    if (!running) return
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000)
-    return () => clearInterval(id)
-  }, [running])
+  const activeTab = useMemo(
+    () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
+    [tabs, activeTabId],
+  )
+  const activeCompany = COMPANIES[activeTab.companyId]
 
-  const selectedKey = dateKey(date)
-  const dayEntries = useMemo(
-    () =>
-      entries
-        .filter((e) => e.date === selectedKey)
-        .sort((a, b) => b.startSec - a.startSec),
-    [entries, selectedKey],
+  // Single global interval advances every running tab's timer independently.
+  const anyRunning = tabs.some((t) => t.timer.running)
+  useEffect(() => {
+    if (!anyRunning) return
+    const id = setInterval(() => {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.timer.running
+            ? { ...t, timer: { ...t.timer, elapsed: t.timer.elapsed + 1 } }
+            : t,
+        ),
+      )
+    }, 1000)
+    return () => clearInterval(id)
+  }, [anyRunning])
+
+  const patchTimer = useCallback(
+    (tabId: string, partial: Partial<TabTimerState>) => {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId ? { ...t, timer: { ...t.timer, ...partial } } : t,
+        ),
+      )
+    },
+    [],
   )
 
-  const isToday = selectedKey === dateKey(today)
+  const patchActive = useCallback(
+    (partial: Partial<TabTimerState>) => patchTimer(activeTabId, partial),
+    [patchTimer, activeTabId],
+  )
 
-  const dayTotal = useMemo(() => {
-    const base = dayEntries.reduce(
-      (sum, e) => sum + Math.max(0, e.endSec - e.startSec),
-      0,
+  const toggleTimer = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTabId) return t
+        const timer = t.timer
+        if (timer.running) {
+          // stop & save
+          const now = new Date()
+          const end = secondsOfDay(now)
+          const start = Math.max(0, end - timer.elapsed)
+          const entry: TimeEntry = {
+            id: `e${Date.now()}`,
+            description: timer.description,
+            task: timer.task,
+            project: timer.project,
+            tags: timer.tags,
+            billable: timer.billable,
+            date: dateKey(now),
+            startSec: start,
+            endSec: end,
+          }
+          return {
+            ...t,
+            timer: {
+              ...timer,
+              running: false,
+              elapsed: 0,
+              description: '',
+              task: null,
+              project: null,
+              tags: [],
+              billable: false,
+              entries: [entry, ...timer.entries],
+            },
+          }
+        }
+        return { ...t, timer: { ...timer, running: true, elapsed: 0 } }
+      }),
     )
-    return base + (running && isToday ? elapsed : 0)
-  }, [dayEntries, running, isToday, elapsed])
+  }, [activeTabId])
 
-  const weekTotal = useMemo(() => {
-    const ws = startOfWeek(date)
-    const keys = new Set<string>()
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(ws)
-      d.setDate(ws.getDate() + i)
-      keys.add(dateKey(d))
+  const updateEntry = useCallback(
+    (next: TimeEntry) => {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                timer: {
+                  ...t.timer,
+                  entries: t.timer.entries.map((e) =>
+                    e.id === next.id ? next : e,
+                  ),
+                },
+              }
+            : t,
+        ),
+      )
+    },
+    [activeTabId],
+  )
+
+  const deleteEntry = useCallback(
+    (id: string) => {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                timer: {
+                  ...t.timer,
+                  entries: t.timer.entries.filter((e) => e.id !== id),
+                },
+              }
+            : t,
+        ),
+      )
+    },
+    [activeTabId],
+  )
+
+  /** Build chrome for the tab strip. */
+  const tabChrome: TabChrome[] = tabs.map((t) => {
+    const c = COMPANIES[t.companyId]
+    return {
+      id: t.id,
+      title: `${c.name} — Jira`,
+      favicon: c.accent,
+      url: `https://${c.code.toLowerCase()}.atlassian.net/jira/software/projects/${c.code}/board`,
+      timerRunning: t.timer.running,
     }
-    const base = entries
-      .filter((e) => keys.has(e.date))
-      .reduce((sum, e) => sum + Math.max(0, e.endSec - e.startSec), 0)
-    const wsToday = startOfWeek(today)
-    const sameWeek = dateKey(startOfWeek(date)) === dateKey(wsToday)
-    return base + (running && sameWeek ? elapsed : 0)
-  }, [entries, date, running, elapsed, today])
+  })
 
-  const stopAndSave = useCallback(() => {
-    const now = new Date()
-    const end = secondsOfDay(now)
-    const start = Math.max(0, end - elapsed)
-    const entry: TimeEntry = {
-      id: `e${Date.now()}`,
-      description,
-      task,
-      project,
-      tags,
-      billable,
-      date: dateKey(now),
-      startSec: start,
-      endSec: end,
-    }
-    setEntries((prev) => [entry, ...prev])
-    setRunning(false)
-    setElapsed(0)
-    setDescription('')
-    setTask(null)
-    setProject(null)
-    setTags([])
-    setBillable(false)
-  }, [description, task, project, tags, billable, elapsed])
-
-  const onToggle = useCallback(() => {
-    if (running) {
-      stopAndSave()
-    } else {
-      setElapsed(0)
-      setRunning(true)
-    }
-  }, [running, stopAndSave])
-
-  const updateEntry = useCallback((next: TimeEntry) => {
-    setEntries((prev) => prev.map((e) => (e.id === next.id ? next : e)))
-  }, [])
-
-  const deleteEntry = useCallback((id: string) => {
-    setEntries((prev) => prev.filter((e) => e.id !== id))
-  }, [])
-
+  /**
+   * Opening a new tab: pick the next company not already open.
+   * Company Y is the primary "third tab". Falls back to any remaining company.
+   */
   const openNewTab = useCallback(() => {
+    const openIds = new Set(tabs.map((t) => t.companyId))
+    const order = [COMPANY_Y, COMPANY_X, COMPANY_ACME]
+    const pick = order.find((c) => !openIds.has(c.id)) ?? COMPANY_Y
+
+    const newTab: Tab = {
+      id: nextTabId(),
+      companyId: pick.id,
+      timer: makeTimerState(pick, false),
+    }
+    setTabs((prev) => [...prev, newTab])
+    setActiveTabId(newTab.id)
+
+    // Per spec: a brand-new (never-before-open) tab shows the continue / start popup.
+    // If we re-open a company whose tab was closed, it also counts as new → popup.
     setPopupOpen(true)
+  }, [tabs, nextTabId])
+
+  const selectTab = useCallback((id: string) => {
+    setActiveTabId(id)
+    // Switching to an existing tab must NOT show the popup — it silently
+    // reverts to that tab's remembered project (already stored in tab.timer).
+    setPopupOpen(false)
   }, [])
 
-  // Simulate the extension popup appearing on first new-tab load.
-  useEffect(() => {
-    const t = setTimeout(() => setPopupOpen(true), 700)
-    return () => clearTimeout(t)
-  }, [])
+  const closeTab = useCallback(
+    (id: string) => {
+      setTabs((prev) => {
+        if (prev.length <= 1) return prev
+        const idx = prev.findIndex((t) => t.id === id)
+        const next = prev.filter((t) => t.id !== id)
+        if (id === activeTabId) {
+          const fallback = next[Math.max(0, idx - 1)]
+          setActiveTabId(fallback.id)
+        }
+        return next
+      })
+    },
+    [activeTabId],
+  )
+
+  // The popup only relates to the active tab's running timer.
+  const showBadge = activeTab.timer.running && !extensionOpen
 
   return (
-    <BrowserFrame
-      onNewTab={openNewTab}
-      popup={
-        <NewTabPopup
-          open={popupOpen}
-          running={running}
-          elapsed={elapsed}
-          projectName={project?.name ?? null}
-          description={description}
-          onContinue={() => setPopupOpen(false)}
-          onTimeout={() => setPopupOpen(false)}
-          onStartNew={() => {
-            setPopupOpen(false)
-            if (running) stopAndSave()
-            setView('list')
-            requestAnimationFrame(() => {
-              const el = document.querySelector<HTMLInputElement>(
-                'input[aria-label="What are you working on?"]',
-              )
-              el?.focus()
-            })
-          }}
-        />
-      }
-    >
-      <TopNav />
-
-      <main className="mx-auto w-full max-w-[894px] px-[30px] pb-24 pt-6">
-        <TimerCard
-          description={description}
-          onDescriptionChange={setDescription}
-          task={task}
-          onTaskChange={setTask}
-          project={project}
-          onProjectChange={setProject}
-          tags={tags}
-          onTagsChange={setTags}
-          billable={billable}
-          onBillableChange={setBillable}
-          elapsed={elapsed}
-          running={running}
-          onToggle={onToggle}
-        />
-
-        <div className="mt-9">
-          <DateToolbar
-            date={date}
-            onPrev={() =>
-              setDate((d) => {
-                const n = new Date(d)
-                n.setDate(d.getDate() - 1)
-                return n
-              })
-            }
-            onNext={() =>
-              setDate((d) => {
-                const n = new Date(d)
-                n.setDate(d.getDate() + 1)
-                return n
-              })
-            }
-            onToday={() => setDate(new Date())}
-            dayTotal={dayTotal}
-            weekTotal={weekTotal}
-            view={view}
-            onViewChange={setView}
-          />
-        </div>
-
-        {view === 'list' ? (
-          <div className="mt-4 flex flex-col gap-3.5">
-            {dayEntries.length === 0 ? (
-              <div className="rounded-[15px] border border-dashed border-border bg-card/50 px-6 py-14 text-center text-[18px] text-muted-foreground">
-                No time entries for this day.
-              </div>
-            ) : (
-              dayEntries.map((entry) => (
-                <TimeEntryCard
-                  key={entry.id}
-                  entry={entry}
-                  onChange={updateEntry}
-                  onDelete={deleteEntry}
+    <div className="min-h-screen bg-neutral-300/60 p-4">
+      <BrowserFrame
+        tabs={tabChrome}
+        activeTabId={activeTabId}
+        onSelectTab={selectTab}
+        onCloseTab={closeTab}
+        onNewTab={openNewTab}
+        onToggleExtension={() => {
+          setExtensionOpen((v) => !v)
+          setPopupOpen(false)
+        }}
+        extensionActive={extensionOpen}
+        extensionBadge={showBadge}
+        overlay={
+          <>
+            {/* Extension panel slides in from the right, anchored under the toolbar icon. */}
+            {extensionOpen && (
+              <div className="absolute right-3 top-3 z-50 h-[calc(100%-1.5rem)] w-[560px] max-w-[calc(100%-1.5rem)] overflow-hidden rounded-[14px] border border-border bg-background shadow-[0_24px_60px_-16px_rgba(0,0,0,0.35)]">
+                <TogglPanel
+                  companyName={activeCompany.name}
+                  state={activeTab.timer}
+                  patch={patchActive}
+                  onToggle={toggleTimer}
+                  onUpdateEntry={updateEntry}
+                  onDeleteEntry={deleteEntry}
+                  onClose={() => setExtensionOpen(false)}
                 />
-              ))
+              </div>
             )}
-          </div>
-        ) : (
-          <div className="mt-4">
-            <CalendarView entries={dayEntries} />
-          </div>
-        )}
-      </main>
-    </BrowserFrame>
+
+            <NewTabPopup
+              open={popupOpen && !extensionOpen}
+              running={activeTab.timer.running}
+              elapsed={activeTab.timer.elapsed}
+              projectName={activeTab.timer.project?.name ?? activeCompany.project.name}
+              description={activeTab.timer.description}
+              onContinue={() => setPopupOpen(false)}
+              onTimeout={() => setPopupOpen(false)}
+              onStartNew={() => {
+                setPopupOpen(false)
+                setExtensionOpen(true)
+                requestAnimationFrame(() => {
+                  const el = document.querySelector<HTMLInputElement>(
+                    'input[aria-label="What are you working on?"]',
+                  )
+                  el?.focus()
+                })
+              }}
+            />
+          </>
+        }
+      >
+        <JiraBoard company={activeCompany} />
+      </BrowserFrame>
+    </div>
   )
 }
