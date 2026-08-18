@@ -111,7 +111,21 @@ export function TogglApp() {
   const activeCompany = COMPANIES[activeTab.companyId]
 
   // One interval ticks the single running timer (only one tab runs at a time).
-  const anyRunning = tabs.some((t) => t.timer.running)
+  const runningTab = tabs.find((t) => t.timer.running) ?? null
+  const anyRunning = runningTab !== null
+
+  // When the last running timer stops (global running count hits zero), surface
+  // the popup prompting the user to start a new project. Tracks the previous
+  // value so we only fire on the transition, not on every render.
+  const prevAnyRunning = useRef(anyRunning)
+  useEffect(() => {
+    if (prevAnyRunning.current && !anyRunning) {
+      setExtensionOpen(false)
+      setPopupOpen(true)
+    }
+    prevAnyRunning.current = anyRunning
+  }, [anyRunning])
+
   useEffect(() => {
     if (!anyRunning) return
     const id = setInterval(() => {
@@ -329,10 +343,10 @@ export function TogglApp() {
 
             <NewTabPopup
               open={popupOpen && !extensionOpen}
-              running={activeTab.timer.running}
-              elapsed={activeTab.timer.elapsed}
-              projectName={activeTab.timer.project?.name ?? activeCompany.project.name}
-              description={activeTab.timer.description}
+              anyRunning={anyRunning}
+              elapsed={runningTab?.timer.elapsed ?? 0}
+              projectName={runningTab?.timer.project?.name ?? null}
+              description={runningTab?.timer.description ?? ''}
               onContinue={() => setPopupOpen(false)}
               onTimeout={() => setPopupOpen(false)}
               onStartNew={startNewProject}

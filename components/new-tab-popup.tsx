@@ -6,7 +6,8 @@ import { formatStopwatch } from '@/lib/toggl-data'
 
 type NewTabPopupProps = {
   open: boolean
-  running: boolean
+  /** whether ANY timer is running across all tabs (something to continue) */
+  anyRunning: boolean
   elapsed: number
   projectName: string | null
   description: string
@@ -22,7 +23,7 @@ const AUTO_CLOSE_MS = 5000
 
 export function NewTabPopup({
   open,
-  running,
+  anyRunning,
   elapsed,
   projectName,
   description,
@@ -76,27 +77,35 @@ export function NewTabPopup({
 
         <div className="px-4 py-4">
           <p className="text-[15px] font-medium text-card-foreground">
-            {running ? 'A timer is running' : 'Pick up where you left off'}
+            {anyRunning ? 'A timer is running' : 'No timer running'}
           </p>
           <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-            {projectName ?? 'No project'}
-            {description ? ` · ${description}` : ''}
-            {running ? ` · ${formatStopwatch(elapsed)}` : ''}
+            {anyRunning
+              ? `${projectName ?? 'No project'}${
+                  description ? ` · ${description}` : ''
+                } · ${formatStopwatch(elapsed)}`
+              : 'Start tracking a new project to begin.'}
           </p>
 
           <div className="mt-4 flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={onContinue}
-              className="flex items-center justify-center gap-2 rounded-[10px] bg-brand px-4 py-2.5 text-[15px] font-semibold text-primary-foreground transition-transform active:scale-[0.98]"
-            >
-              <Play className="h-4 w-4 fill-current" />
-              Continue timer
-            </button>
+            {anyRunning && (
+              <button
+                type="button"
+                onClick={onContinue}
+                className="flex items-center justify-center gap-2 rounded-[10px] bg-brand px-4 py-2.5 text-[15px] font-semibold text-primary-foreground transition-transform active:scale-[0.98]"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                Continue timer
+              </button>
+            )}
             <button
               type="button"
               onClick={onStartNew}
-              className="flex items-center justify-center gap-2 rounded-[10px] border border-border px-4 py-2.5 text-[15px] font-semibold text-card-foreground transition-colors hover:bg-muted"
+              className={
+                anyRunning
+                  ? 'flex items-center justify-center gap-2 rounded-[10px] border border-border px-4 py-2.5 text-[15px] font-semibold text-card-foreground transition-colors hover:bg-muted'
+                  : 'flex items-center justify-center gap-2 rounded-[10px] bg-brand px-4 py-2.5 text-[15px] font-semibold text-primary-foreground transition-transform active:scale-[0.98]'
+              }
             >
               <Plus className="h-4 w-4" />
               Start new project
@@ -111,7 +120,9 @@ export function NewTabPopup({
               />
             </div>
             <p className="mt-1.5 text-center text-[12px] text-muted-foreground">
-              Continuing current timer in {seconds}s
+              {anyRunning
+                ? `Continuing current timer in ${seconds}s`
+                : `Dismissing in ${seconds}s`}
             </p>
           </div>
         </div>
