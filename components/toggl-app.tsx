@@ -41,6 +41,41 @@ function makeTimerState(company: Company, running: boolean): TabTimerState {
   }
 }
 
+/**
+ * Stop a running timer and fold the elapsed time into a saved entry at the
+ * front of that tab's list. No-op for an already-stopped timer. Used both for
+ * the active tab's stop button and to auto-stop other tabs when a new timer
+ * starts (single global timer rule).
+ */
+function stopAndSave(timer: TabTimerState): TabTimerState {
+  if (!timer.running) return timer
+  const now = new Date()
+  const end = secondsOfDay(now)
+  const start = Math.max(0, end - timer.elapsed)
+  const entry: TimeEntry = {
+    id: `e${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    description: timer.description,
+    task: timer.task,
+    project: timer.project,
+    tags: timer.tags,
+    billable: timer.billable,
+    date: dateKey(now),
+    startSec: start,
+    endSec: end,
+  }
+  return {
+    ...timer,
+    running: false,
+    elapsed: 0,
+    description: '',
+    task: null,
+    project: null,
+    tags: [],
+    billable: false,
+    entries: [entry, ...timer.entries],
+  }
+}
+
 export function TogglApp() {
   // Monotonic counter for new tab IDs. Kept in a ref so Fast Refresh / Strict
   // Mode re-running effects can never hand out a duplicate key.
@@ -75,7 +110,7 @@ export function TogglApp() {
   )
   const activeCompany = COMPANIES[activeTab.companyId]
 
-  // Single global interval advances every running tab's timer independently.
+  // One interval ticks the single running timer (only one tab runs at a time).
   const anyRunning = tabs.some((t) => t.timer.running)
   useEffect(() => {
     if (!anyRunning) return
@@ -110,43 +145,54 @@ export function TogglApp() {
   const toggleTimer = useCallback(() => {
     setTabs((prev) =>
       prev.map((t) => {
-        if (t.id !== activeTabId) return t
-        const timer = t.timer
-        if (timer.running) {
-          // stop & save
-          const now = new Date()
-          const end = secondsOfDay(now)
-          const start = Math.max(0, end - timer.elapsed)
-          const entry: TimeEntry = {
-            id: `e${Date.now()}`,
-            description: timer.description,
-            task: timer.task,
-            project: timer.project,
-            tags: timer.tags,
-            billable: timer.billable,
-            date: dateKey(now),
-            startSec: start,
-            endSec: end,
-          }
-          return {
-            ...t,
-            timer: {
-              ...timer,
-              running: false,
-              elapsed: 0,
-              description: '',
-              task: null,
-              project: null,
-              tags: [],
-              billable: false,
-              entries: [entry, ...timer.entries],
-            },
-          }
+        if (t.id === activeTabId) {
+          // Toggle the active tab: stop & save if running, else start fresh.
+          if (t.timer.running) return { ...t, timer: stopAndSave(t.timer) }
+          return { ...t, timer: { ...t.timer, running: true, elapsed: 0 } }
         }
-        return { ...t, timer: { ...timer, running: true, elapsed: 0 } }
+        // Single global timer: starting the active tab stops & saves every
+        // other running tab. (No-op if that tab wasn't running.)
+        return t.timer.running ? { ...t, timer: stopAndSave(t.timer) } : t
       }),
     )
   }, [activeTabId])
+
+  /**
+   * "Start new project" from the new-tab popup: stop & save any timer running
+   * on any tab, then begin a fresh running timer on the active tab and open
+   * the extension so the user can name it.
+   */
+  const startNewProject = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.id === activeTabId) {
+          const base = stopAndSave(t.timer)
+          return {
+            ...t,
+            timer: {
+              ...base,
+              running: true,
+              elapsed: 0,
+              description: '',
+              task: null,
+              project: activeCompany.project,
+              tags: [],
+              billable: true,
+            },
+          }
+        }
+        return t.timer.running ? { ...t, timer: stopAndSave(t.timer) } : t
+      }),
+    )
+    setPopupOpen(false)
+    setExtensionOpen(true)
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>(
+        'input[aria-label="What are you working on?"]',
+      )
+      el?.focus()
+    })
+  }, [activeTabId, activeCompany])
 
   const updateEntry = useCallback(
     (next: TimeEntry) => {
@@ -217,15 +263,17 @@ export function TogglApp() {
     setTabs((prev) => [...prev, newTab])
     setActiveTabId(newTab.id)
 
-    // Per spec: a brand-new (never-before-open) tab shows the continue / start popup.
-    // If we re-open a company whose tab was closed, it also counts as new → popup.
+    // A brand-new tab closes the extension and shows the continue / start popup.
+    // Re-opening a company whose tab was closed also counts as new → popup.
+    setExtensionOpen(false)
     setPopupOpen(true)
   }, [tabs, nextTabId])
 
   const selectTab = useCallback((id: string) => {
     setActiveTabId(id)
-    // Switching to an existing tab must NOT show the popup — it silently
-    // reverts to that tab's remembered project (already stored in tab.timer).
+    // Changing tabs closes the extension and dismisses any popup. The panel
+    // silently reverts to the newly-active tab's remembered project.
+    setExtensionOpen(false)
     setPopupOpen(false)
   }, [])
 
@@ -287,16 +335,7 @@ export function TogglApp() {
               description={activeTab.timer.description}
               onContinue={() => setPopupOpen(false)}
               onTimeout={() => setPopupOpen(false)}
-              onStartNew={() => {
-                setPopupOpen(false)
-                setExtensionOpen(true)
-                requestAnimationFrame(() => {
-                  const el = document.querySelector<HTMLInputElement>(
-                    'input[aria-label="What are you working on?"]',
-                  )
-                  el?.focus()
-                })
-              }}
+              onStartNew={startNewProject}
             />
           </>
         }
