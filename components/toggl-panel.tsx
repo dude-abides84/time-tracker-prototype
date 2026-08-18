@@ -24,6 +24,8 @@ export type TabTimerState = {
   entries: TimeEntry[]
   date: string
   view: 'list' | 'calendar'
+  /** last project tracked on this tab, so returning can resume it */
+  lastProject: Project | null
 }
 
 type TogglPanelProps = {

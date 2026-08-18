@@ -38,6 +38,9 @@ function makeTimerState(company: Company, running: boolean): TabTimerState {
     entries: seedEntriesFor(company, today),
     date: today,
     view: 'list',
+    // A running tab already has a project to resume; an idle tab starts with
+    // none, so returning to it won't auto-start a timer out of nowhere.
+    lastProject: running ? company.project : null,
   }
 }
 
@@ -73,6 +76,8 @@ function stopAndSave(timer: TabTimerState): TabTimerState {
     tags: [],
     billable: false,
     entries: [entry, ...timer.entries],
+    // Remember what was tracked so returning to this tab can resume it.
+    lastProject: timer.project ?? timer.lastProject,
   }
 }
 
@@ -192,6 +197,7 @@ export function TogglApp() {
               project: activeCompany.project,
               tags: [],
               billable: true,
+              lastProject: activeCompany.project,
             },
           }
         }
@@ -283,13 +289,40 @@ export function TogglApp() {
     setPopupOpen(true)
   }, [tabs, nextTabId])
 
-  const selectTab = useCallback((id: string) => {
-    setActiveTabId(id)
-    // Changing tabs closes the extension and dismisses any popup. The panel
-    // silently reverts to the newly-active tab's remembered project.
-    setExtensionOpen(false)
-    setPopupOpen(false)
-  }, [])
+  const selectTab = useCallback(
+    (id: string) => {
+      setActiveTabId(id)
+      // Changing tabs closes the extension and dismisses any popup.
+      setExtensionOpen(false)
+      setPopupOpen(false)
+
+      setTabs((prev) =>
+        prev.map((t) => {
+          if (t.id === id) {
+            // Returning to a tab whose timer had stopped: resume its previous
+            // project. (If it's already running or never had a project, leave
+            // it untouched.)
+            if (!t.timer.running && t.timer.lastProject) {
+              return {
+                ...t,
+                timer: {
+                  ...t.timer,
+                  running: true,
+                  elapsed: 0,
+                  project: t.timer.lastProject,
+                  billable: true,
+                },
+              }
+            }
+            return t
+          }
+          // Single global timer: ending every other tab's running timer.
+          return t.timer.running ? { ...t, timer: stopAndSave(t.timer) } : t
+        }),
+      )
+    },
+    [],
+  )
 
   const closeTab = useCallback(
     (id: string) => {
