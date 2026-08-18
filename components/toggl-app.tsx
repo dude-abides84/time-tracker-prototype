@@ -41,6 +41,7 @@ function makeTimerState(company: Company, running: boolean): TabTimerState {
     // A running tab already has a project to resume; an idle tab starts with
     // none, so returning to it won't auto-start a timer out of nowhere.
     lastProject: running ? company.project : null,
+    lastDescription: running ? company.columns[1]?.issues[0]?.title ?? '' : '',
   }
 }
 
@@ -78,6 +79,7 @@ function stopAndSave(timer: TabTimerState): TabTimerState {
     entries: [entry, ...timer.entries],
     // Remember what was tracked so returning to this tab can resume it.
     lastProject: timer.project ?? timer.lastProject,
+    lastDescription: timer.description || timer.lastDescription,
   }
 }
 
@@ -198,6 +200,7 @@ export function TogglApp() {
               tags: [],
               billable: true,
               lastProject: activeCompany.project,
+              lastDescription: '',
             },
           }
         }
@@ -310,6 +313,7 @@ export function TogglApp() {
                   running: true,
                   elapsed: 0,
                   project: t.timer.lastProject,
+                  description: t.timer.lastDescription,
                   billable: true,
                 },
               }

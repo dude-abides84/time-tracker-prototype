@@ -26,6 +26,8 @@ export type TabTimerState = {
   view: 'list' | 'calendar'
   /** last project tracked on this tab, so returning can resume it */
   lastProject: Project | null
+  /** last description tracked on this tab, restored alongside the project */
+  lastDescription: string
 }
 
 type TogglPanelProps = {
