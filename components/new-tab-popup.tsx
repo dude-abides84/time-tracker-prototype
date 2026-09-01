@@ -61,9 +61,8 @@ export function NewTabPopup({
       <div className="ml-auto mr-6 h-3 w-3 translate-y-1.5 rotate-45 rounded-[2px] border-l border-t border-border bg-card" />
       <div className="overflow-hidden rounded-[16px] border border-border bg-card shadow-[0_20px_50px_-12px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="flex items-baseline gap-1 font-logo font-extrabold">
-            <span className="text-[18px] text-brand">toggl</span>
-            <span className="text-[15px] text-brand/55">2.0</span>
+          <div className="font-logo text-[16px] font-extrabold tracking-tight text-brand">
+            Time Tracker Prototype
           </div>
           <button
             type="button"

@@ -91,9 +91,8 @@ export function TogglPanel({
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* Panel header — nav bar styled to fit the narrow extension */}
       <header className="flex h-[58px] shrink-0 items-center justify-between border-b border-border bg-card px-5">
-        <div className="flex items-baseline gap-1.5 font-logo font-extrabold tracking-tight">
-          <span className="text-[22px] text-brand">toggl</span>
-          <span className="text-[17px] font-bold text-brand/55">2.0</span>
+        <div className="font-logo text-[19px] font-extrabold tracking-tight text-brand">
+          Time Tracker Prototype
         </div>
         <div className="flex items-center gap-3">
           <span className="max-w-[150px] truncate rounded-full bg-muted px-3 py-1 text-[12px] font-medium text-foreground/70">
