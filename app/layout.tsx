@@ -11,7 +11,7 @@ const nunito = Nunito({
 })
 
 export const metadata: Metadata = {
-  title: 'toggl 2.0 — Time Tracker',
+  title: 'Time Tracker',
   description: 'Track your time across tasks and projects',
   generator: 'v0.app',
   icons: {
